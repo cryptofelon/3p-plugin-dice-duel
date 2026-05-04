@@ -8,9 +8,12 @@
 
 import type { Address } from "@solana/kit";
 import { useQueryClient } from "@tanstack/react-query";
-import { usePluginIdentity } from "@townexchange/3p-plugin-sdk/client";
-import { Card, Flex, notificationApi } from "@townexchange/tex-ui-kit";
-import { TokenIcon } from "@townexchange/token-icons";
+import {
+	usePluginAudio,
+	usePluginIdentity,
+} from "@anterra/3p-plugin-sdk/client";
+import { Card, Flex, notificationApi } from "@anterra/tex-ui-kit";
+import { TokenIcon } from "@anterra/token-icons";
 import type React from "react";
 import { useCallback, useState } from "react";
 import type { MouseEventHandler } from "react";
@@ -20,13 +23,10 @@ import {
 	queryKeys,
 	useSvmGameConfig,
 } from "../../../hooks/svm/queries-indexed";
+import { assets } from "../../../../shared/assets";
 import { useDiceDuelSvm } from "../../../hooks/svm/useDiceDuelSvm";
 import { useCountdown } from "../../../hooks/useCountdown";
-import {
-	playClickSound,
-	playCoinSound,
-	playErrorSound,
-} from "../../../services/DiceDuelAudioService";
+import { getVrfTimeoutState } from "../../../hooks/vrfTimeout";
 import styles from "./SvmInventory.module.scss";
 
 interface SvmWagerSlotProps {
@@ -150,6 +150,7 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 	onClick,
 	onRightClick,
 }) => {
+	const audio = usePluginAudio();
 	const queryClient = useQueryClient();
 	const { getUsernameBySvmAddress } = usePluginIdentity();
 	const {
@@ -174,6 +175,9 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 		wager.status === "Pending" ? expiresAtNum : null,
 	);
 
+	// VRF timeout — only trust on-chain status, no client-side countdown
+	const { isVrfTimeout, isActive } = getVrfTimeoutState(wager);
+
 	const invalidateQueries = useCallback(() => {
 		queryClient.invalidateQueries({
 			queryKey: queryKeys.inventoryWagers.all(),
@@ -184,7 +188,7 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 	const handleCancel = useCallback(async () => {
 		if (actionState !== "confirm-cancel") {
 			setActionState("confirm-cancel");
-			playClickSound();
+			audio.play(assets.audio.click, { volume: 0.6 });
 			return;
 		}
 		setActionState("confirming");
@@ -195,7 +199,7 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 			invalidateQueries();
 		} catch (e: any) {
 			const decoded = logDiceDuelError("cancelWager", e);
-			playErrorSound();
+			audio.play(assets.audio.lose, { volume: 0.6 });
 			notificationApi.notify({
 				type: "error",
 				title: "Error",
@@ -208,7 +212,7 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 
 	const handleClaimExpired = useCallback(async () => {
 		setActionState("confirming");
-		playClickSound();
+		audio.play(assets.audio.click, { volume: 0.6 });
 		try {
 			await claimExpired.execute({
 				challenger: wager.challenger as Address,
@@ -219,7 +223,7 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 			invalidateQueries();
 		} catch (e: any) {
 			const decoded = logDiceDuelError("claimExpired", e);
-			playErrorSound();
+			audio.play(assets.audio.lose, { volume: 0.6 });
 			notificationApi.notify({
 				type: "error",
 				title: "Error",
@@ -241,21 +245,21 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 			return;
 		}
 		setActionState("confirming");
-		playClickSound();
+		audio.play(assets.audio.click, { volume: 0.6 });
 		try {
 			await claimWinnings.execute({
 				challenger: wager.challenger as Address,
 				treasury: configData.config.treasury as Address,
 				nonce: BigInt(wager.nonce),
 			});
-			playCoinSound();
+			audio.play(assets.audio.coin, { volume: 0.6 });
 			// No inline notification — the server-driven wager_claimed event
 			// in DiceDuelUIContainer handles the "Winnings Claimed" toast
 			// with the actual payout amount from the chain.
 			invalidateQueries();
 		} catch (e: any) {
 			const decoded = logDiceDuelError("claimWinnings", e);
-			playErrorSound();
+			audio.play(assets.audio.lose, { volume: 0.6 });
 			notificationApi.notify({
 				type: "error",
 				title: "Error",
@@ -274,7 +278,7 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 
 	const handleClaimVrfTimeout = useCallback(async () => {
 		setActionState("confirming");
-		playClickSound();
+		audio.play(assets.audio.click, { volume: 0.6 });
 		try {
 			await claimVrfTimeout.execute({
 				challenger: wager.challenger as Address,
@@ -286,7 +290,7 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 			invalidateQueries();
 		} catch (e: any) {
 			const decoded = logDiceDuelError("claimVrfTimeout", e);
-			playErrorSound();
+			audio.play(assets.audio.lose, { volume: 0.6 });
 			notificationApi.notify({
 				type: "error",
 				title: "Error",
@@ -316,8 +320,8 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 			return;
 		}
 
-		// Claim VRF timeout
-		if (wager.status === "VrfTimeout") {
+		// Claim VRF timeout (on-chain confirmed only)
+		if (isVrfTimeout) {
 			handleClaimVrfTimeout();
 			return;
 		}
@@ -327,6 +331,7 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 	}, [
 		statusInfo,
 		isChallenger,
+		isVrfTimeout,
 		wager,
 		onClick,
 		handleCancel,
@@ -373,21 +378,23 @@ export const SvmWagerSlot: React.FC<SvmWagerSlotProps> = ({
 			{/* Line 2: Meta text + Status badge */}
 			<Flex align="center" justify="between" gap={4} style={{ marginTop: 1 }}>
 				<span className={styles.wagerMeta}>
-					{statusInfo?.type === "claimable"
-						? "You won"
-						: isChallenger
-							? "You challenged"
-							: "Challenged you"}
+					{isActive
+						? "Awaiting VRF result..."
+						: statusInfo?.type === "claimable"
+							? "You won"
+							: isChallenger
+								? "You challenged"
+								: "Challenged you"}
 					{countdown && (
 						<span
+							className={
+								Number(wager.expiresAt) - Math.floor(Date.now() / 1000) < 60
+									? styles.countdownUrgent
+									: styles.countdownWarning
+							}
 							style={{
 								marginLeft: 4,
-								color:
-									Number(wager.expiresAt) - Math.floor(Date.now() / 1000) < 60
-										? "#ef4444"
-										: "#f59e0b",
 								fontSize: 9,
-								fontWeight: 600,
 								fontVariantNumeric: "tabular-nums",
 							}}
 						>

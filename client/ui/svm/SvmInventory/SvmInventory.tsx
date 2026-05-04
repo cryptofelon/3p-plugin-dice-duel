@@ -1,28 +1,27 @@
 /**
  * SvmInventory — SVM-specific inventory panel for Dice Duel.
  *
- * Matches the EVM EvmInventory layout and interactions:
- * - Left-click a dice bag → enter selection mode → click a player to challenge
- * - Right-click a dice bag → context menu with "Select Player to Wager"
- * - Wager slots with click/right-click actions
+ * Orchestrates hooks and passes data/handlers to presentation components.
+ * All network queries live here — sub-components are pure presentation.
  */
 
 import {
 	usePluginIdentity,
 	usePluginSvmTransaction,
-} from "@townexchange/3p-plugin-sdk/client";
+	usePluginWindows,
+} from "@anterra/3p-plugin-sdk/client";
 import {
 	Button,
+	Flex,
 	Panel,
 	Stack,
 	StatusBox,
 	Typography,
 	useContextMenu,
 	useSelectionStore,
-} from "@townexchange/tex-ui-kit";
-import { windowManagerApi } from "@townexchange/tex-ui-kit/api";
+} from "@anterra/tex-ui-kit";
 import type React from "react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { SvmDiceBag, SvmWager, SvmWagerCompact } from "../../../api";
 import {
 	useSvmDiceBags,
@@ -33,14 +32,15 @@ import { useDiceDuelSvm } from "../../../hooks/svm/useDiceDuelSvm";
 import {
 	DD_INCOMING_WAGER,
 	DD_INITIATE_WAGER,
+	DD_LEADERBOARD,
+	DD_SHOP,
 	DD_WAGER_DETAILS,
 	DD_WAGER_HISTORY,
 } from "../../../window-keys";
-import { InventorySection } from "./InventorySection";
-import { SvmDiceBagSlot } from "./SvmDiceBagSlot";
-import { SvmHistoryItem } from "./SvmHistoryItem";
+import { DiceBagsSection } from "./DiceBagsSection";
+import { HistorySection } from "./HistorySection";
 import styles from "./SvmInventory.module.scss";
-import { SvmWagerSlot } from "./SvmWagerSlot";
+import { WagerListSection } from "./WagerListSection";
 
 interface SvmInventoryProps {
 	className?: string;
@@ -51,6 +51,7 @@ export const SvmInventory: React.FC<SvmInventoryProps> = ({ className }) => {
 	const { open: openContextMenu } = useContextMenu();
 	const startSelection = useSelectionStore((s) => s.startSelection);
 	const { getUsernameBySvmAddress } = usePluginIdentity();
+	const pluginWindows = usePluginWindows();
 
 	const [collapsedSections, setCollapsedSections] = useState<
 		Record<string, boolean>
@@ -63,7 +64,6 @@ export const SvmInventory: React.FC<SvmInventoryProps> = ({ className }) => {
 		outgoing,
 		active,
 		claimable,
-		resolved,
 		recentHistory,
 		totalHistoryCount,
 		isLoading: wagersLoading,
@@ -71,9 +71,9 @@ export const SvmInventory: React.FC<SvmInventoryProps> = ({ className }) => {
 
 	const { data: statsData } = useSvmPlayerStats();
 	const { cancelWager } = useDiceDuelSvm();
+	const { data: diceBagsData, isLoading: diceBagsLoading } = useSvmDiceBags();
 
 	// Detect stuck pendingNonce: on-chain says there's a pending wager but indexer has none.
-	// This happens when the indexer missed the wager creation event.
 	const pendingNonce =
 		statsData?.stats?.pendingNonce != null
 			? BigInt(statsData.stats.pendingNonce)
@@ -81,21 +81,145 @@ export const SvmInventory: React.FC<SvmInventoryProps> = ({ className }) => {
 	const hasStuckPendingWager =
 		pendingNonce !== null && outgoing.length === 0 && !wagersLoading;
 
-	const handleCancelStuckWager = async () => {
+	const diceBags = diceBagsData?.diceBags ?? [];
+	const activeBags = diceBags.filter((b) => b.usesRemaining > 0);
+	const depletedBags = diceBags.filter((b) => b.usesRemaining <= 0);
+	const isLoading = wagersLoading || diceBagsLoading;
+
+	// ── Handlers ──────────────────────────────────────────────────────────────
+
+	const handleCancelStuckWager = useCallback(async () => {
 		if (pendingNonce === null) return;
 		try {
 			await cancelWager.execute({ nonce: pendingNonce });
 		} catch (e) {
 			console.error("[SvmInventory] Failed to cancel stuck wager:", e);
 		}
-	};
+	}, [pendingNonce, cancelWager]);
 
-	const { data: diceBagsData, isLoading: diceBagsLoading } = useSvmDiceBags();
+	const startDiceSelection = useCallback(
+		(bag: SvmDiceBag) => {
+			startSelection({
+				mode: "player-wager",
+				source: { type: "dice", id: bag.mint },
+				validTargetTypes: ["player"],
+				tooltips: {
+					instruction: "Click a player to challenge",
+					hoverTemplate: (name) => [
+						{ text: "Challenge " },
+						{ text: name, highlight: true },
+					],
+				},
+				onComplete: (target) => {
+					pluginWindows.open(DD_INITIATE_WAGER, {
+						opponentAddress: target.data?.svmAddress as string | undefined,
+						opponentName: target.data?.displayName as string | undefined,
+						diceBagMint: bag.mint,
+					});
+				},
+			});
+		},
+		[startSelection, pluginWindows],
+	);
 
-	const diceBags = diceBagsData?.diceBags ?? [];
-	const activeBags = diceBags.filter((b) => b.usesRemaining > 0);
-	const depletedBags = diceBags.filter((b) => b.usesRemaining <= 0);
-	const totalBags = diceBags.length;
+	const handleDiceLeftClick = useCallback(
+		(bag: SvmDiceBag) => {
+			if (bag.usesRemaining <= 0) return;
+			startDiceSelection(bag);
+		},
+		[startDiceSelection],
+	);
+
+	const handleDiceRightClick = useCallback(
+		(bag: SvmDiceBag) => (event: React.MouseEvent) => {
+			event.preventDefault();
+			const mintShort = `${bag.mint.slice(0, 4)}...${bag.mint.slice(-4)}`;
+			openContextMenu({
+				x: event.clientX,
+				y: event.clientY,
+				title: `Dice Bag ${mintShort}`,
+				items: [
+					{
+						id: "select-player-wager",
+						label: "Select Player to Wager",
+						onClick: () => startDiceSelection(bag),
+						disabled: bag.usesRemaining <= 0,
+					},
+				],
+			});
+		},
+		[openContextMenu, startDiceSelection],
+	);
+
+	const handleBuyClick = useCallback(() => {
+		pluginWindows.open(DD_SHOP);
+	}, [pluginWindows]);
+
+	const handleWagerClick = useCallback(
+		(wager: SvmWager) => {
+			const isChallenger =
+				wager.challenger.toLowerCase() === walletAddress!.toLowerCase();
+
+			if (wager.status === "Pending" && !isChallenger) {
+				pluginWindows.open(DD_INCOMING_WAGER, { wager });
+			} else {
+				pluginWindows.open(DD_WAGER_DETAILS, { wager });
+			}
+		},
+		[walletAddress, pluginWindows],
+	);
+
+	const handleWagerRightClick = useCallback(
+		(wager: SvmWager) => (event: React.MouseEvent) => {
+			event.preventDefault();
+			const addrShort = `${wager.address.slice(0, 4)}...${wager.address.slice(-4)}`;
+			const isChallenger =
+				wager.challenger.toLowerCase() === walletAddress!.toLowerCase();
+			const menuItems = [
+				{
+					id: "view-details",
+					label: "View Details",
+					onClick: () => pluginWindows.open(DD_WAGER_DETAILS, { wager }),
+				},
+			];
+
+			if (wager.status === "Pending" && !isChallenger) {
+				menuItems.unshift({
+					id: "accept",
+					label: "Accept Wager",
+					onClick: () => pluginWindows.open(DD_INCOMING_WAGER, { wager }),
+				});
+			}
+
+			openContextMenu({
+				x: event.clientX,
+				y: event.clientY,
+				title: `Wager ${addrShort}`,
+				items: menuItems,
+			});
+		},
+		[walletAddress, pluginWindows, openContextMenu],
+	);
+
+	const handleHistoryItemClick = useCallback(
+		(wager: SvmWager | SvmWagerCompact) => {
+			pluginWindows.open(DD_WAGER_DETAILS, { wager });
+		},
+		[pluginWindows],
+	);
+
+	const handleViewAllHistory = useCallback(() => {
+		pluginWindows.open(DD_WAGER_HISTORY);
+	}, [pluginWindows]);
+
+	const toggleSection = useCallback((section: string) => {
+		setCollapsedSections((prev) => ({
+			...prev,
+			[section]: !prev[section],
+		}));
+	}, []);
+
+	// ── Early returns ─────────────────────────────────────────────────────────
 
 	if (!walletAddress) {
 		return (
@@ -116,137 +240,28 @@ export const SvmInventory: React.FC<SvmInventoryProps> = ({ className }) => {
 		);
 	}
 
-	const toggleSection = (section: string) => {
-		setCollapsedSections((prev) => ({
-			...prev,
-			[section]: !prev[section],
-		}));
-	};
-
-	const startDiceSelection = (bag: SvmDiceBag) => {
-		startSelection({
-			mode: "player-wager",
-			source: { type: "dice", id: bag.mint },
-			validTargetTypes: ["player"],
-			tooltips: {
-				instruction: "Click a player to challenge",
-				hoverTemplate: (name) => [
-					{ text: "Challenge " },
-					{ text: name, highlight: true },
-				],
-			},
-			onComplete: (target) => {
-				windowManagerApi.open(DD_INITIATE_WAGER as any, {
-					opponentAddress: target.data?.svmAddress as string | undefined,
-					opponentName: target.data?.displayName as string | undefined,
-					diceBagMint: bag.mint,
-				});
-			},
-		});
-	};
-
-	const handleDiceLeftClick = (bag: SvmDiceBag) => {
-		if (bag.usesRemaining <= 0) return;
-		startDiceSelection(bag);
-	};
-
-	const handleDiceRightClick =
-		(bag: SvmDiceBag) => (event: React.MouseEvent) => {
-			event.preventDefault();
-			const mintShort = `${bag.mint.slice(0, 4)}...${bag.mint.slice(-4)}`;
-			openContextMenu({
-				x: event.clientX,
-				y: event.clientY,
-				title: `Dice Bag ${mintShort}`,
-				items: [
-					{
-						id: "select-player-wager",
-						label: "Select Player to Wager",
-						onClick: () => startDiceSelection(bag),
-						disabled: bag.usesRemaining <= 0,
-					},
-					{
-						id: "view-details",
-						label: "View Details",
-						onClick: () => {
-							console.log("View dice bag details:", bag.mint);
-						},
-					},
-				],
-			});
-		};
-
-	const handleWagerClick = (wager: SvmWager) => {
-		const isChallenger =
-			wager.challenger.toLowerCase() === walletAddress.toLowerCase();
-
-		if (wager.status === "Pending" && !isChallenger) {
-			windowManagerApi.open(DD_INCOMING_WAGER as any, { wager });
-		} else {
-			windowManagerApi.open(DD_WAGER_DETAILS as any, { wager });
-		}
-	};
-
-	const handleHistoryItemClick = (wager: SvmWager | SvmWagerCompact) => {
-		windowManagerApi.open(DD_WAGER_DETAILS as any, { wager });
-	};
-
-	const handleWagerRightClick =
-		(wager: SvmWager) => (event: React.MouseEvent) => {
-			event.preventDefault();
-			const addrShort = `${wager.address.slice(0, 4)}...${wager.address.slice(-4)}`;
-			const isChallenger =
-				wager.challenger.toLowerCase() === walletAddress.toLowerCase();
-			const menuItems = [
-				{
-					id: "view-details",
-					label: "View Details",
-					onClick: () =>
-						windowManagerApi.open(DD_WAGER_DETAILS as any, { wager }),
-				},
-			];
-
-			if (wager.status === "Pending" && !isChallenger) {
-				menuItems.unshift({
-					id: "accept",
-					label: "Accept Wager",
-					onClick: () =>
-						windowManagerApi.open(DD_INCOMING_WAGER as any, { wager }),
-				});
-			}
-
-			openContextMenu({
-				x: event.clientX,
-				y: event.clientY,
-				title: `Wager ${addrShort}`,
-				items: menuItems,
-			});
-		};
-
-	const isLoading = wagersLoading || diceBagsLoading;
-	const incomingCount = incoming?.length ?? 0;
-	const outgoingCount = outgoing?.length ?? 0;
-	const activeCount = active?.length ?? 0;
-	const claimableCount = claimable?.length ?? 0;
-
 	return (
-		<Panel
-			padding="compact"
-			className={className}
-			style={{ width: 220, background: "#3a3028" }}
-		>
+		<Panel padding="compact" className={className} style={{ width: 220 }}>
 			<Stack gap={2}>
-				<Typography variant="gold" size="sm">
-					Dice Duel
-				</Typography>
+				<Flex justify="between" align="center">
+					<Typography variant="gold" size="sm">
+						Dice Duel
+					</Typography>
+					<button
+						type="button"
+						className={styles.viewAllLink}
+						onClick={() => pluginWindows.open(DD_LEADERBOARD)}
+					>
+						Leaderboard
+					</button>
+				</Flex>
 
-					{/* Stuck pending wager warning — indexer missed creation, on-chain state is ahead */}
 				{hasStuckPendingWager && (
 					<StatusBox variant="error">
 						<Stack gap={2}>
 							<Typography variant="error" size="xs">
-								Pending wager #{pendingNonce!.toString()} not found. Cancel it to
-								create new wagers.
+								Pending wager #{pendingNonce!.toString()} not found. Cancel it
+								to create new wagers.
 							</Typography>
 							<Button
 								size="sm"
@@ -261,151 +276,61 @@ export const SvmInventory: React.FC<SvmInventoryProps> = ({ className }) => {
 					</StatusBox>
 				)}
 
-			{isLoading ? (
+				{isLoading ? (
 					<Typography variant="muted" size="xs">
 						Loading...
 					</Typography>
 				) : (
 					<Stack gap={2}>
-						{/* Your Dice */}
-						<InventorySection title="Your Dice" count={totalBags} layout="grid">
-							{activeBags.length > 0 || depletedBags.length > 0 ? (
-								<>
-									{activeBags.map((bag) => (
-										<SvmDiceBagSlot
-											key={bag.mint}
-											diceBag={bag}
-											onLeftClick={handleDiceLeftClick}
-											onRightClick={handleDiceRightClick(bag)}
-										/>
-									))}
-									{depletedBags.map((bag) => (
-										<SvmDiceBagSlot
-											key={bag.mint}
-											diceBag={bag}
-											onLeftClick={handleDiceLeftClick}
-											onRightClick={handleDiceRightClick(bag)}
-										/>
-									))}
-								</>
-							) : (
-								<Typography
-									variant="muted"
-									size="xs"
-									style={{ padding: 8, textAlign: "center" }}
-								>
-									No dice. Visit the shop!
-								</Typography>
-							)}
-						</InventorySection>
+						<DiceBagsSection
+							activeBags={activeBags}
+							depletedBags={depletedBags}
+							totalBags={diceBags.length}
+							onDiceLeftClick={handleDiceLeftClick}
+							onDiceRightClick={handleDiceRightClick}
+							onBuyClick={handleBuyClick}
+						/>
+						<WagerListSection
+							title="Active"
+							wagers={active ?? []}
+							walletAddress={walletAddress}
+							onWagerClick={handleWagerClick}
+							onWagerRightClick={handleWagerRightClick}
+						/>
 
-						{/* Incoming Wagers */}
-						{incomingCount > 0 && (
-							<InventorySection
-								title="Incoming"
-								count={incomingCount}
-								layout="stack"
-							>
-								{incoming!.map((wager) => (
-									<SvmWagerSlot
-										key={wager.address}
-										wager={wager}
-										walletAddress={walletAddress}
-										onClick={handleWagerClick}
-										onRightClick={handleWagerRightClick(wager)}
-									/>
-								))}
-							</InventorySection>
-						)}
+						<WagerListSection
+							title="Incoming"
+							wagers={incoming ?? []}
+							walletAddress={walletAddress}
+							onWagerClick={handleWagerClick}
+							onWagerRightClick={handleWagerRightClick}
+						/>
+						<WagerListSection
+							title="Pending"
+							wagers={outgoing ?? []}
+							walletAddress={walletAddress}
+							onWagerClick={handleWagerClick}
+							onWagerRightClick={handleWagerRightClick}
+						/>
 
-						{/* Claimable Wagers (winner can claim_winnings) */}
-						{claimableCount > 0 && (
-							<InventorySection
-								title="Claim"
-								count={claimableCount}
-								layout="stack"
-							>
-								{claimable!.map((wager) => (
-									<SvmWagerSlot
-										key={wager.address}
-										wager={wager}
-										walletAddress={walletAddress}
-										onClick={handleWagerClick}
-										onRightClick={handleWagerRightClick(wager)}
-									/>
-								))}
-							</InventorySection>
-						)}
+						<WagerListSection
+							title="Claim"
+							wagers={claimable ?? []}
+							walletAddress={walletAddress}
+							onWagerClick={handleWagerClick}
+							onWagerRightClick={handleWagerRightClick}
+						/>
 
-						{/* Outgoing Wagers */}
-						{outgoingCount > 0 && (
-							<InventorySection
-								title="Pending"
-								count={outgoingCount}
-								layout="stack"
-							>
-								{outgoing!.map((wager) => (
-									<SvmWagerSlot
-										key={wager.address}
-										wager={wager}
-										walletAddress={walletAddress}
-										onClick={handleWagerClick}
-										onRightClick={handleWagerRightClick(wager)}
-									/>
-								))}
-							</InventorySection>
-						)}
-
-						{/* Active Games */}
-						{activeCount > 0 && (
-							<InventorySection
-								title="Active"
-								count={activeCount}
-								layout="stack"
-							>
-								{active!.map((wager) => (
-									<SvmWagerSlot
-										key={wager.address}
-										wager={wager}
-										walletAddress={walletAddress}
-										onClick={handleWagerClick}
-										onRightClick={handleWagerRightClick(wager)}
-									/>
-								))}
-							</InventorySection>
-						)}
-
-						{/* History (collapsible, compact) */}
-						{recentHistory.length > 0 && (
-							<InventorySection
-								title="History"
-								count={totalHistoryCount}
-								collapsed={collapsedSections.history}
-								onToggle={() => toggleSection("history")}
-								layout="stack"
-							>
-								{recentHistory.map((wager) => (
-									<SvmHistoryItem
-										key={wager.address}
-										wager={wager}
-										walletAddress={walletAddress}
-										onClick={handleHistoryItemClick}
-										resolveUsername={getUsernameBySvmAddress}
-									/>
-								))}
-								{totalHistoryCount > recentHistory.length && (
-									<button
-										type="button"
-										className={styles.viewAllLink}
-										onClick={() =>
-											windowManagerApi.open(DD_WAGER_HISTORY as any, {} as any)
-										}
-									>
-										View all {totalHistoryCount} duels →
-									</button>
-								)}
-							</InventorySection>
-						)}
+						<HistorySection
+							recentHistory={recentHistory}
+							totalHistoryCount={totalHistoryCount}
+							walletAddress={walletAddress}
+							collapsed={collapsedSections.history}
+							onToggle={() => toggleSection("history")}
+							onItemClick={handleHistoryItemClick}
+							onViewAll={handleViewAllHistory}
+							resolveUsername={getUsernameBySvmAddress}
+						/>
 					</Stack>
 				)}
 			</Stack>

@@ -8,10 +8,10 @@
 import {
 	defineEventHandlers,
 	defineServerPlugin,
-} from "@townexchange/3p-plugin-sdk/server";
-import type { OnchainEvent } from "@townexchange/3p-plugin-sdk/shared";
-import { PluginAnimationType } from "@townexchange/3p-plugin-sdk/shared";
-import { formatSol } from "@townexchange/3p-plugin-sdk/shared";
+} from "@anterra/3p-plugin-sdk/server";
+import type { OnchainEvent } from "@anterra/3p-plugin-sdk/shared";
+import { PluginAnimationType } from "@anterra/3p-plugin-sdk/shared";
+import { formatSol } from "@anterra/3p-plugin-sdk/shared";
 import type {
 	DiceDuelEventMap,
 	WagerStatusEventData,
@@ -213,8 +213,20 @@ export const diceDuelServerPlugin = defineServerPlugin({
 					wagerAddress: d.wagerAddress,
 				});
 
-				// Chat: personalized win/loss messages
+				// Server-authoritative camera FX: both players see result simultaneously
 				const loser = d.winner === d.challenger ? d.opponent : d.challenger;
+				ctx.camera.setCameraControl(
+					{ svmAddress: d.winner },
+					{ action: "flash", color: 0xffd700, durationMs: 400 },
+				);
+				if (loser) {
+					ctx.camera.setCameraControl(
+						{ svmAddress: loser },
+						{ action: "flash", color: 0xff2222, durationMs: 300 },
+					);
+				}
+
+				// Chat: personalized win/loss messages
 				const winPid = pid(d.winner);
 				const losePid = pid(loser);
 				const msgs: Array<{

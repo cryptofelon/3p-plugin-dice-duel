@@ -8,6 +8,10 @@ pub mod state;
 
 use instructions::*;
 
+// Prevent test-mode from being used in release builds
+#[cfg(all(feature = "test-mode", not(debug_assertions)))]
+compile_error!("test-mode feature must NOT be used in release builds");
+
 declare_id!("7xfkbzEMJ31jPUqZoJ3EXrU72LiAw1wGKupGqmdZdoMM");
 
 #[program]
@@ -62,20 +66,6 @@ pub mod dice_duel {
         instructions::accept_wager::handle_accept_wager(context)
     }
 
-    pub fn consume_randomness(
-        context: Context<ConsumeRandomnessAccountConstraints>,
-        randomness: [u8; 32],
-    ) -> Result<()> {
-        instructions::consume_randomness::handle_consume_randomness(context, randomness)
-    }
-
-    pub fn consume_randomness_minimal(
-        context: Context<ConsumeRandomnessMinimalAccountConstraints>,
-        randomness: [u8; 32],
-    ) -> Result<()> {
-        instructions::consume_randomness_minimal::handle_consume_randomness_minimal(context, randomness)
-    }
-
     pub fn consume_randomness_resolved(
         context: Context<ConsumeRandomnessResolvedAccountConstraints>,
         randomness: [u8; 32],
@@ -85,10 +75,6 @@ pub mod dice_duel {
 
     pub fn claim_winnings(context: Context<ClaimWinningsAccountConstraints>) -> Result<()> {
         instructions::claim_winnings::handle_claim_winnings(context)
-    }
-
-    pub fn settle_wager(context: Context<SettleWagerAccountConstraints>) -> Result<()> {
-        instructions::settle_wager::handle_settle_wager(context)
     }
 
     pub fn claim_vrf_timeout(context: Context<ClaimVrfTimeoutAccountConstraints>) -> Result<()> {
@@ -148,5 +134,22 @@ pub mod dice_duel {
         enabled: Option<bool>,
     ) -> Result<()> {
         instructions::admin::update_game_type::handle_update_game_type(context, name, enabled)
+    }
+
+    pub fn propose_admin(
+        context: Context<ProposeAdminAccountConstraints>,
+        new_admin: Pubkey,
+    ) -> Result<()> {
+        instructions::admin::propose_admin::handle_propose_admin(context, new_admin)
+    }
+
+    pub fn accept_admin(context: Context<AcceptAdminAccountConstraints>) -> Result<()> {
+        instructions::admin::accept_admin::handle_accept_admin(context)
+    }
+
+    pub fn cancel_admin_proposal(
+        context: Context<CancelAdminProposalAccountConstraints>,
+    ) -> Result<()> {
+        instructions::admin::cancel_admin_proposal::handle_cancel_admin_proposal(context)
     }
 }

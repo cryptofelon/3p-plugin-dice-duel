@@ -16,28 +16,26 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	requireDefined,
+	usePluginAudio,
 	usePluginSvmCluster,
 	usePluginSvmTransaction,
-} from "@townexchange/3p-plugin-sdk/client";
-import { formatSol } from "@townexchange/3p-plugin-sdk/shared";
+} from "@anterra/3p-plugin-sdk/client";
+import { formatSol } from "@anterra/3p-plugin-sdk/shared";
 import {
 	Button,
 	Flex,
 	Typography,
 	notificationApi,
-} from "@townexchange/tex-ui-kit";
-import { TokenIcon } from "@townexchange/token-icons";
+} from "@anterra/tex-ui-kit";
+import { TokenIcon } from "@anterra/token-icons";
 import { useEffect, useState } from "react";
 import { logDiceDuelError } from "../../../hooks/svm/errors";
 import {
 	queryKeys,
 	useSvmGameConfig,
 } from "../../../hooks/svm/queries-indexed";
+import { assets } from "../../../../shared/assets";
 import { useDiceDuelSvm } from "../../../hooks/svm/useDiceDuelSvm";
-import {
-	playClickSound,
-	playErrorSound,
-} from "../../../services/DiceDuelAudioService";
 import styles from "./SvmShop.module.scss";
 
 type TransactionState = "idle" | "confirming" | "success" | "error";
@@ -49,6 +47,7 @@ const RPC_URLS: Record<string, string> = {
 };
 
 export const SvmShop = () => {
+	const audio = usePluginAudio();
 	const { walletAddress } = usePluginSvmTransaction();
 	const cluster = requireDefined(usePluginSvmCluster(), "SVM cluster");
 	const queryClient = useQueryClient();
@@ -103,7 +102,7 @@ export const SvmShop = () => {
 	const handleMintBag = async () => {
 		if (!treasury || hasInsufficientBalance) return;
 
-		playClickSound();
+		audio.play(assets.audio.click, { volume: 0.6 });
 		setError(null);
 		setTxState("confirming");
 
@@ -133,7 +132,7 @@ export const SvmShop = () => {
 		} catch (err) {
 			const decoded = logDiceDuelError("mintDiceBag", err);
 			setTxState("error");
-			playErrorSound();
+			audio.play(assets.audio.lose, { volume: 0.6 });
 			setError(decoded.message);
 			notificationApi.notify({
 				type: "error",

@@ -3,7 +3,7 @@
  * Matches the visual design/structure of EVM HistoryItemCompact.
  */
 
-import { TokenIcon } from "@townexchange/token-icons";
+import { TokenIcon } from "@anterra/token-icons";
 import type React from "react";
 import type { SvmWager, SvmWagerCompact } from "../../../api";
 import styles from "./SvmInventory.module.scss";
@@ -45,9 +45,8 @@ export const SvmHistoryItem: React.FC<SvmHistoryItemProps> = ({
 	}
 	return (
 		<div
-			className={styles.historyItemCompact}
+			className={`${styles.historyItemCompact} ${isWin ? styles.historyBorderWin : styles.historyBorderLoss}`}
 			onClick={handleClick}
-			style={{ borderLeftColor: isWin ? "#22c55e" : "#ef4444" }}
 		>
 			<span className={styles.historyOpponent}>{opponentDisplay}</span>
 			<span className={styles.historyAmount}>

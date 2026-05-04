@@ -1,5 +1,5 @@
 {
-	"name": "@townexchange/3p-plugin-dragon-dice",
+	"name": "@anterra/3p-plugin-dragon-dice",
 	"version": "0.1.0",
 	"description": "Dice Duel game plugin for TEX (third-party SDK)",
 	"type": "module",
@@ -9,8 +9,8 @@
 		"build:svm": "bash scripts/anchor-build.sh",
 		"codegen:svm": "node scripts/codegen-svm.mjs",
 		"build:ts": "tsc --noEmit",
-		"build": "pnpm build:svm && pnpm codegen:svm && pnpm build:ts",
-		"build:ci": "pnpm build:ts",
+		"build": "tsup",
+		"build:full": "pnpm build:svm && pnpm codegen:svm && pnpm build",
 		"codegen": "pnpm codegen:svm",
 		"test:svm": "anchor test",
 		"test:ts": "vitest run",
@@ -20,46 +20,43 @@
 		"clean:all": "pnpm clean && cargo clean"
 	},
 	"exports": {
-		"./client": {
-			"types": "./client/index.ts",
-			"import": "./client/index.ts"
-		},
+		"./client": "./client/index.ts",
 		"./server": {
 			"types": "./server/index.ts",
-			"import": "./server/index.ts"
+			"default": "./dist/server/index.js"
 		},
 		"./shared": {
 			"types": "./shared/index.ts",
-			"import": "./shared/index.ts"
+			"default": "./dist/shared/index.js"
 		},
 		"./manifest": {
 			"types": "./shared/manifest.ts",
-			"import": "./shared/manifest.ts"
+			"default": "./dist/shared/manifest.js"
 		},
 		"./indexing-svm": {
 			"types": "./shared/indexing-svm/index.ts",
-			"import": "./shared/indexing-svm/index.ts"
+			"default": "./dist/shared/indexing-svm/index.js"
 		},
 		"./svm": {
 			"types": "./shared/svm/program.ts",
-			"import": "./shared/svm/program.ts"
+			"default": "./dist/shared/svm/program.js"
 		}
 	},
 	"dependencies": {
-		"@townexchange/3p-plugin-sdk": "workspace:*",
-		"@townexchange/token-icons": "workspace:*",
+		"@anterra/3p-plugin-sdk": "workspace:*",
+		"@anterra/token-icons": "workspace:*",
 		"@solana/kit": "catalog:"
 	},
 	"peerDependencies": {
-		"@townexchange/tex-ui-kit": "workspace:*",
+		"@anterra/tex-ui-kit": "workspace:*",
+		"@tanstack/react-query": "*",
 		"react": ">=18",
 		"viem": "*",
 		"wagmi": "*",
-		"@tanstack/react-query": "*",
 		"zustand": "*"
 	},
 	"peerDependenciesMeta": {
-		"@townexchange/tex-ui-kit": {
+		"@anterra/tex-ui-kit": {
 			"optional": true
 		},
 		"react": {
@@ -79,13 +76,21 @@
 		}
 	},
 	"devDependencies": {
-		"@types/react": "catalog:",
-		"codama": "~1.5.0",
 		"@codama/nodes-from-anchor": "~1.3.8",
 		"@codama/renderers-js": "~1.7.0",
+		"@repo/tsup-config": "workspace:*",
+		"@types/react": "catalog:",
+		"codama": "~1.5.0",
+		"tsup": "catalog:",
 		"typescript": "catalog:"
 	},
-	"files": ["client/", "server/", "shared/", "generated/"],
+	"files": [
+		"client/",
+		"dist/",
+		"server/",
+		"shared/",
+		"generated/"
+	],
 	"imports": {
 		"#generated/clients/svm/dice-duel": "./generated/clients/svm/dice-duel/index.ts",
 		"#generated/clients/svm/dice-duel/pdas": "./generated/clients/svm/dice-duel/pdas.ts",

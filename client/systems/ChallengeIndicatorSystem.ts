@@ -8,17 +8,16 @@
  * Also updates local player position/entityId in module state for UI components.
  */
 
-import type { PluginSystemContext } from "@townexchange/3p-plugin-sdk/client";
-import { createSpriteEntity } from "@townexchange/3p-plugin-sdk/client";
-import type { PluginWorld } from "@townexchange/3p-plugin-sdk/ecs";
+import type { PluginSystemContext } from "@anterra/3p-plugin-sdk/client";
+import { createSpriteEntity } from "@anterra/3p-plugin-sdk/client";
+import type { PluginWorld } from "@anterra/3p-plugin-sdk/ecs";
 import {
 	type PluginComponent,
 	hasComponent,
 	removeEntity,
-} from "@townexchange/3p-plugin-sdk/ecs";
+} from "@anterra/3p-plugin-sdk/ecs";
+import { assets } from "../../shared/assets";
 import {
-	CHALLENGE_TEXTURE_KEY,
-	CHALLENGE_TEXTURE_PATH,
 	DICE_DUEL_ANIMATION,
 	DICE_DUEL_DEPTHS,
 	DICE_DUEL_SCALES,
@@ -37,6 +36,8 @@ interface IndicatorVisual {
 
 export function createChallengeIndicatorSystem() {
 	const indicatorVisuals = new Map<string, IndicatorVisual>();
+	/** Tracks challenges that have already triggered camera FX. */
+	const fxFired = new Set<string>();
 	let cleanupRegistered = false;
 	let capturedWorld: PluginWorld | null = null;
 
@@ -105,8 +106,7 @@ export function createChallengeIndicatorSystem() {
 				const spriteEid = createSpriteEntity(world, ctx, {
 					worldX: Position.worldX[entityId],
 					worldY: Position.worldY[entityId] - 40,
-					textureKey: CHALLENGE_TEXTURE_KEY,
-					texturePath: CHALLENGE_TEXTURE_PATH,
+					textureKey: assets.textures.challenge,
 					depth: DICE_DUEL_DEPTHS.CHALLENGE_INDICATOR,
 					scale: DICE_DUEL_SCALES.CHALLENGE_INDICATOR,
 					originX: 0.5,
@@ -115,6 +115,15 @@ export function createChallengeIndicatorSystem() {
 
 				visual = { spriteEid, targetEntityId: entityId };
 				indicatorVisuals.set(wagerId, visual);
+
+				// Camera FX: vignette when local player receives a challenge
+				if (!fxFired.has(wagerId)) {
+					fxFired.add(wagerId);
+					ctx.services.cameraController.vignette({
+						intensity: 0.3,
+						durationMs: 2000,
+					});
+				}
 			}
 
 			// Follow target entity's world position
@@ -142,6 +151,7 @@ export function createChallengeIndicatorSystem() {
 			if (!activeWagerIds.has(wagerId)) {
 				removeEntity(world, visual.spriteEid);
 				indicatorVisuals.delete(wagerId);
+				fxFired.delete(wagerId);
 			}
 		}
 

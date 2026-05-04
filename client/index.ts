@@ -6,83 +6,103 @@
  * - ctx.services.audio instead of ctx.worldContext.services.audio
  */
 
-import { defineClientPlugin } from "@townexchange/3p-plugin-sdk/client";
-import { getTokenTextures } from "@townexchange/token-icons";
+import type { PluginUIEntry } from "@anterra/3p-plugin-sdk/client";
+import { defineClientPlugin } from "@anterra/3p-plugin-sdk/client";
+import { getTokenTextures } from "@anterra/token-icons";
+import { assets } from "../shared/assets";
 import { diceDuelChains } from "../shared/chains";
-import {
-	CHALLENGE_TEXTURE_KEY,
-	CHALLENGE_TEXTURE_PATH,
-	DICE_TEXTURE_PATHS,
-} from "../shared/constants";
 import { manifest as diceDuelManifest } from "../shared/manifest";
 import { registerDiceDuelNotificationHandler } from "./handlers";
 import { DiceDuelModule } from "./modules/DiceDuelModule";
-import { registerDiceDuelWindows } from "./register-windows";
-import { initDiceDuelAudio } from "./services/DiceDuelAudioService";
 import { DiceDuelUIContainer } from "./ui";
+import {
+	DD_INCOMING_WAGER,
+	DD_INITIATE_WAGER,
+	DD_INVENTORY,
+	DD_LEADERBOARD,
+	DD_SHOP,
+	DD_WAGER_DETAILS,
+	DD_WAGER_HISTORY,
+} from "./window-keys";
 
 // ============================================================================
 // Plugin Definition
 // ============================================================================
 
+const ui: PluginUIEntry[] = [
+	// Slot — always rendered in game HUD
+	{
+		type: "slot",
+		id: "dice-duel-hud",
+		slot: "game-hud",
+		component: DiceDuelUIContainer,
+		priority: 90, // Below BombaPerp (100)
+	},
+	// Windows — on-demand, managed by WindowManager
+	{
+		type: "window",
+		key: DD_SHOP,
+		component: () => import("./ui/svm/SvmShop/SvmShopContent"),
+		inputMode: "blocking",
+	},
+	{
+		type: "window",
+		key: DD_INVENTORY,
+		component: () => import("./ui/svm/SvmInventory/SvmInventoryContent"),
+	},
+	{
+		type: "window",
+		key: DD_INITIATE_WAGER,
+		component: () => import("./ui/svm/SvmWager/InitiateWagerContent"),
+	},
+	{
+		type: "window",
+		key: DD_INCOMING_WAGER,
+		component: () => import("./ui/svm/SvmWager/AcceptWagerContent"),
+	},
+	{
+		type: "window",
+		key: DD_WAGER_DETAILS,
+		component: () => import("./ui/svm/SvmWager/SvmWagerDetailsContent"),
+	},
+	{
+		type: "window",
+		key: DD_WAGER_HISTORY,
+		component: () => import("./ui/svm/SvmWager/SvmWagerHistoryContent"),
+	},
+	{
+		type: "window",
+		key: DD_LEADERBOARD,
+		component: () => import("./ui/svm/SvmLeaderboard/SvmLeaderboardContent"),
+	},
+];
+
 export const DiceDuelClientPlugin = defineClientPlugin({
-	id: "dice-duel",
 	name: "Dice Duel",
 	version: "1.0.0",
 	sdkVersion: "1.0.0",
 	modules: [DiceDuelModule], // ECS module for visual effects
-	ui: [
-		{
-			id: "dice-duel-hud",
-			slot: "game-hud",
-			component: DiceDuelUIContainer,
-			priority: 90, // Below BombaPerp (100)
-		},
-	],
+	ui,
 	capabilities: ["rendering", "network"],
 	chains: diceDuelChains,
 	manifest: diceDuelManifest,
+	assets,
 	onLoad: async (ctx) => {
-		// Register all windows with the window manager
-		registerDiceDuelWindows();
-
 		// Register notification packet handler.
-		// Query invalidation on incoming notifications is handled here via ctx.queries,
-		// which the bridge wires to the app's QueryClient singleton.
 		registerDiceDuelNotificationHandler(ctx);
 
-		// Initialize audio (async, non-blocking)
-		const audio = ctx.services.audio;
-		if (audio) {
-			initDiceDuelAudio(audio).catch((err) => {
-				console.warn("[DiceDuel] Audio init failed (non-fatal):", err);
-			});
-		}
-
-		// Preload all plugin textures (non-blocking).
-		// Systems use hasTexture() guards so they gracefully wait for loading.
+		// Plugin audio + textures are auto-loaded by framework via assets declaration.
+		// Only token textures (external, dynamic) still need manual loading.
 		const render = ctx.services.render;
 		const textureLoads: Promise<void>[] = [];
-
-		for (const [key, path] of Object.entries(DICE_TEXTURE_PATHS)) {
-			if (!render.hasTexture(key)) {
-				textureLoads.push(render.loadImage(key, path));
-			}
-		}
 		for (const { key, url } of getTokenTextures()) {
 			if (!render.hasTexture(key)) {
 				textureLoads.push(render.loadImage(key, url));
 			}
 		}
-		if (!render.hasTexture(CHALLENGE_TEXTURE_KEY)) {
-			textureLoads.push(
-				render.loadImage(CHALLENGE_TEXTURE_KEY, CHALLENGE_TEXTURE_PATH),
-			);
-		}
-
 		if (textureLoads.length > 0) {
 			Promise.all(textureLoads).catch((err) => {
-				console.warn("[DiceDuel] Texture preload failed (non-fatal):", err);
+				console.warn("[DiceDuel] Token texture preload failed (non-fatal):", err);
 			});
 		}
 	},
@@ -127,11 +147,8 @@ export {
 	DD_INCOMING_WAGER,
 	DD_WAGER_DETAILS,
 	DD_WAGER_HISTORY,
+	DD_LEADERBOARD,
 } from "./window-keys";
-
-// ─── Window Registration ───────────────────────────────────────────────────
-
-export { registerDiceDuelWindows } from "./register-windows";
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
@@ -152,19 +169,9 @@ export {
 
 export { DiceDuelModule } from "./modules";
 
-// ─── Audio ──────────────────────────────────────────────────────────────────
+// ─── Assets ─────────────────────────────────────────────────────────────────
 
-export {
-	initDiceDuelAudio,
-	playClickSound,
-	playErrorSound,
-	playChallengeSound,
-	playRollSound,
-	playLandSound,
-	playWinSound,
-	playLoseSound,
-	playCoinSound,
-} from "./services/DiceDuelAudioService";
+export { assets, getDiceFaceHandle, DICE_FACE_COUNT } from "../shared/assets";
 
 // ─── API ───────────────────────────────────────────────────────────────────
 
